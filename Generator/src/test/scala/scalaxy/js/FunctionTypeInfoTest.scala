@@ -15,17 +15,7 @@ object FunctionTypeInfoTest {
   	val srcName = "test.js"
   	implicit val compiler = ClosureCompilerUtils.scanExterns(List(SourceFile.fromCode(srcName, src)))
   	val vs = compiler.scope.getVars.filter(_.getInputName.equals(srcName)).toList
-  	for (v <- vs) {
-  		println("VAR: " + v)
-  		// println(s"\ttpe = ${v.getType}\n\tdoc = ${v.getJSDocInfo}")
-  		// Option(v.getType) collect {
-  		// 	case t: FunctionType =>
-  		// 		println("\tparams = " + t.getParameters)
-  		// }
-  		println("\t" + SomeFunctionTypeInfo.unapply(v))
-  		println("\t" + SomeFunctionTypeInfo.unapply(v.getType))
-  	}
-
+  	// for (v <- vs) println("VAR: " + v +"\n\t" + SomeFunctionTypeInfo.unapply(v))
     compiler -> vs
   }
 }
