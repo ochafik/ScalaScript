@@ -12,15 +12,34 @@ class TreesGenerator(val global: Universe) {
 
   import SpecialCases._
 
-  def generateSignatures[T <: Universe#Tree](sources: List[SourceFile], ownerName: String,  filter: Scope.Var => Boolean = null): List[T] = {
+  def generateSignatures[T <: Universe#Tree](
+  		sources: List[SourceFile],
+  		ownerName: String,
+  		filter: Scope.Var => Boolean = null,
+  		extraDecls: List[T] = Nil)
+  	: T = {
 
-    implicit val externs = ClosureCompilerUtils.scanExterns(sources)
-    val globalVars = ExternsAnalysis.analyze(externs, filter)
-    val generatedDecls = globalVars.classes.flatMap(classVars => {
-      generateClass(classVars, ownerName: TermName)
+  	val packageName: TermName = ownerName
+  	implicit val externs = ClosureCompilerUtils.scanExterns(sources)
+    implicit val resolver = Resolver((simpleName: Name) => {
+      Select(Ident(packageName), simpleName)
     })
+    val globalVars = ExternsAnalysis.analyze(externs, filter)
 
-    generatedDecls.map(_.asInstanceOf[T])
+    val generatedDecls: List[Tree] = globalVars.classes.flatMap(classVars => {
+      generateClass(classVars, packageName)
+    })
+    val generatedGlobals: List[Tree] = globalVars
+    	.globalVars
+    	.map(convertMember(_))
+    	.map(fixQuasiquotesInitSuperCall)
+
+   val allDecls = generatedDecls ++ generatedGlobals
+    q"""
+      object $packageName extends scala.AnyRef {
+        ..$allDecls
+      }
+    """.asInstanceOf[T]
   }
 
   case class Resolver(f: Name => Tree) {
@@ -62,39 +81,44 @@ class TreesGenerator(val global: Universe) {
     	resolver("Array": TypeName),
     	List(elementType))
 
-  private def convertTypeRef(jsType: JSType, templateTypeNames: Set[String], nullable: Boolean = false)
+  private def convertTypeRef(jsType: JSType,
+  													 templateTypeNames: Set[String],
+  													 nullable: Boolean = false)
   									(implicit externs: ClosureCompiler, resolver: Resolver)
   									: (Modifiers, Tree) = {
   	import externs._
 
+  	def default = TypeTree(if (nullable) typeOf[AnyRef] else typeOf[Any])
     // println(s"jsType = $jsType (${Option(jsType).map(_.getClass.getName)}, jsDocInfo = ${Option(jsType).map(_.getJSDocInfo).orNull}")
   	def convertType(t: JSType): Tree = t match {
   	  case null =>
-        TypeTree(typeOf[Any])
+      	default
 
       case t if templateTypeNames(t.toString) =>
-      	TypeTree(typeOf[Any])
+      	default
 
-      case (_: AllType) | (_: NoType) | (_: UnknownType) =>
+      case (_: VoidType) | (_: NoType) =>
+        TypeTree(typeOf[Unit])
+
+      case (_: AllType) | (_: UnknownType) => //  | (_: NoType)
       	(
       		for (jsDocInfo <- Option(t.getJSDocInfo))
     			yield convertType(jsDocInfo.getType)
-  			).getOrElse(TypeTree(typeOf[Any]))
-
-      case t: BooleanType =>
-        optional(nullable, TypeTree(typeOf[Boolean]))
+  			).getOrElse(default)
 
       case t: NullType =>
         TypeTree(typeOf[Null])
 
+      case t: BooleanType =>
+      	TypeTree(if (nullable) typeOf[java.lang.Boolean] else typeOf[Boolean])
+        // optional(nullable, TypeTree(typeOf[Boolean]))
+
       case t: NumberType =>
-        optional(nullable, TypeTree(typeOf[Double]))
+      	TypeTree(if (nullable) typeOf[java.lang.Double] else typeOf[Double])
+        // optional(nullable, TypeTree(typeOf[Double]))
 
       case t: StringType =>
         optional(nullable, TypeTree(typeOf[String]))
-
-      case t: VoidType =>
-        TypeTree(typeOf[Unit])
 
       case t: UnionType =>
         var hasNull = false
@@ -109,7 +133,9 @@ class TreesGenerator(val global: Universe) {
           case _ =>
             true
         })
-        val convertedAlts = alts.map(t => convertTypeRef(t, templateTypeNames, hasNull || hasUndefined)._2)
+        val convertedAlts =
+        	alts.map(t => convertTypeRef(t, templateTypeNames, nullable = hasNull)._2)
+
         val conv = convertedAlts match {
           case List(t) =>
             t
@@ -184,8 +210,59 @@ class TreesGenerator(val global: Universe) {
 	  }
 	}
 
-  def generateClass(classVars: ClassVars, owner: Name)(implicit externs: ClosureCompiler): List[Tree] = {
+  def getParams(info: FunctionTypeInfo, rename: Boolean = false)
+  						 (implicit externs: ClosureCompiler, resolver: Resolver) = {
+  	for ((name, tpe) <- info.params) yield
+  		ValDef(
+				NoMods,
+				(if (rename) name + "$" else name): TermName,
+				convertTypeRef(tpe, info.templateParamsSet)._2,
+				EmptyTree)
+  }
 
+  def convertMember(memberVar: Scope.Var)
+  								 (implicit externs: ClosureCompiler, resolver: Resolver): Tree = {
+    val memberName: TermName = memberVar.getName.split("\\.").last
+    val templateTypeNames = Option(memberVar.getJSDocInfo).map(_.getTemplateTypeNames().toSet).getOrElse(Set())
+    if (!templateTypeNames.isEmpty)
+      EmptyTree
+    else if (memberName.toString == "toString")
+      EmptyTree
+    else {
+      assert(memberName.toString.trim != "")
+      memberVar.getType match {
+        case ft: FunctionType =>
+        	val Some(info) = SomeFunctionTypeInfo.unapply(memberVar)
+        	var mods =
+            if (info.isOverride && !invalidOverrideExceptions(memberVar.getName) ||
+                missingOverrideExceptions(memberVar.getName))
+              Modifiers(Flag.OVERRIDE)
+            else
+              NoMods
+          if (info.isDeprecated)
+          	mods = NoMods.mapAnnotations(list => q"new scala.deprecated" :: list)
+          DefDef(
+          	mods,
+          	memberName,
+          	Nil,
+          	List(getParams(info)),
+          	convertTypeRef(info.returnType, info.templateParamsSet)._2,
+          	q"???")
+        case t =>
+          val (mods, valType) = Option(t).map(convertTypeRef(_, templateTypeNames)).getOrElse(NoMods -> TypeTree(typeOf[Any]))
+          val vd = ValDef(mods, memberName, valType,
+        		if (mods.hasFlag(Flag.MUTABLE)) EmptyTree
+        		else Literal(Constant(defaultValue(valType.tpe))))
+          // println("vd = " + vd + " (valType.tpe = " + valType.tpe + ")")
+          vd
+          // q"var $memberName: $valType = _"
+      }
+    }
+  }
+
+  def generateClass(classVars: ClassVars, owner: Name)
+  								 (implicit externs: ClosureCompiler, resolver: Resolver)
+  								 : List[Tree] = {
     import externs._
 
     val (fullClassName, packageName, simpleClassName) = classVars.className match {
@@ -195,64 +272,76 @@ class TreesGenerator(val global: Universe) {
         (className, null, className)
     }
 
-    implicit val resolver = Resolver((simpleName: Name) => {
-      Select(Ident(owner), simpleName: Name)
-    })
-
-    def conv(t: JSType, templateTypeNames: Set[String]) = convertTypeRef(t, templateTypeNames)
-
-    def getParams(info: FunctionTypeInfo, rename: Boolean = false) = {
-    	for ((name, tpe) <- info.params) yield
-    		ValDef(
-  				NoMods,
-  				(if (rename) name + "$" else name): TermName,
-  				conv(tpe, info.templateParamsSet)._2,
-  				EmptyTree)
-    }
+    
 
     val constructorInfo = classVars.constructor.flatMap(SomeFunctionTypeInfo.unapply(_))
 
     val className = simpleClassName: TypeName
     val companionName = simpleClassName: TermName
 
-    def convertMember(memberVar: Scope.Var): Tree = {
-      val memberName: TermName = memberVar.getName.split("\\.").last
-      val templateTypeNames = Option(memberVar.getJSDocInfo).map(_.getTemplateTypeNames().toSet).getOrElse(Set())
-      if (!templateTypeNames.isEmpty)
-        EmptyTree
-      else if (memberName.toString == "toString")
-        EmptyTree
-      else {
-        assert(memberName.toString.trim != "")
-        memberVar.getType match {
-          case ft: FunctionType =>
-          	val Some(info) = SomeFunctionTypeInfo.unapply(memberVar)
-          	var mods =
-              if (info.isOverride && !invalidOverrideExceptions(memberVar.getName) ||
-                  missingOverrideExceptions(memberVar.getName))
-                Modifiers(Flag.OVERRIDE)
-              else
-                NoMods
-            if (info.isDeprecated)
-            	mods = NoMods.mapAnnotations(list => q"new scala.deprecated" :: list)
-            DefDef(
-            	mods,
-            	memberName,
-            	Nil,
-            	List(getParams(info)),
-            	conv(info.returnType, info.templateParamsSet)._2,
-            	q"???")
-          case t =>
-            val (mods, valType) = Option(t).map(conv(_, templateTypeNames)).getOrElse(NoMods -> TypeTree(typeOf[Any]))
-            val vd = ValDef(mods, memberName, valType,
-          		if (mods.hasFlag(Flag.MUTABLE)) EmptyTree
-          		else Literal(Constant(defaultValue(valType.tpe))))
-            // println("vd = " + vd + " (valType.tpe = " + valType.tpe + ")")
-            vd
-            // q"var $memberName: $valType = _"
+
+    val protoMembers = classVars.protoMembers.map(convertMember(_))
+    val staticMembers = classVars.staticMembers.filter(!_.getName.endsWith(".prototype")).map(convertMember(_))
+
+    val companion =
+      if (staticMembers.isEmpty)
+        Nil
+      else
+        //def apply(..${getParams(classDoc)}): $className = ???
+        q"""
+          @scalaxy.js.global
+          object $companionName {
+            ..$staticMembers
+          }
+        """ :: Nil
+
+    lazy val traitTree =
+      fixQuasiquotesInitSuperCall(q"""
+        @scalaxy.js.global
+        trait $className {
+          ..$protoMembers
         }
-      }
+      """)
+
+    val result = (constructorInfo, constructorInfo.flatMap(_.doc)) match {
+      case (None, None) =>
+        traitTree :: companion
+      case _ if classVars.constructor.get.getType.isInterface =>
+        traitTree :: companion
+      case (Some(info), Some(doc)) =>
+        // TODO add template params from methods (e.g. for Array)
+        val templateTypeNames = info.templateParamsSet
+
+        val parents = {
+          val interfaces =
+            (doc.getExtendedInterfaces.toList ++ doc.getImplementedInterfaces.toList)
+            .toSet.toList.map((t: JSTypeExpression) =>  convertTypeRef(t, templateTypeNames)._2)
+          if (interfaces.isEmpty) {
+            if (simpleClassName == "Object" || simpleClassName == "Number" || simpleClassName == "Boolean")
+              List(TypeTree(typeOf[AnyRef]))
+            else
+              List(resolver("Object": TypeName))
+            // List(TypeTree(typeOf[AnyRef]))
+          } else {
+            interfaces
+          }
+        }
+
+        val cparams = getParams(info, rename = true)
+        val classDef = q"""
+          @scalaxy.js.global
+          class $className(..$cparams)
+              extends ..$parents {
+            ..$protoMembers
+          }
+        """
+        fixQuasiquotesInitSuperCall(classDef) :: companion
+      // }
     }
+    result.map(fixQuasiquotesInitSuperCall)
+  }
+
+  val fixQuasiquotesInitSuperCall = {
     /*
       Quasiquotes generate a constructor like this:
 
@@ -285,68 +374,10 @@ class TreesGenerator(val global: Universe) {
         case _ =>
           super.transform(tree)
       }
-    }
-
-    val protoMembers = classVars.protoMembers.map(convertMember(_))
-    val staticMembers = classVars.staticMembers.filter(!_.getName.endsWith(".prototype")).map(convertMember(_))
-
-    val companion =
-      if (staticMembers.isEmpty)
-        Nil
-      else
-        //def apply(..${getParams(classDoc)}): $className = ???
-        q"""
-          @scalaxy.js.global
-          object $companionName {
-            ..$staticMembers
-          }
-        """ :: Nil
-
-    lazy val traitTree =
-      fixer.transform(q"""
-        @scalaxy.js.global
-        trait $className {
-          ..$protoMembers
-        }
-      """)
-
-    val result = (constructorInfo, constructorInfo.flatMap(_.doc)) match {
-      case (None, None) =>
-        traitTree :: companion
-      case _ if classVars.constructor.get.getType.isInterface =>
-        traitTree :: companion
-      case (Some(info), Some(doc)) =>
-        // TODO add template params from methods (e.g. for Array)
-        val templateTypeNames = info.templateParamsSet
-
-        val parents = {
-          val interfaces = 
-            (doc.getExtendedInterfaces.toList ++ doc.getImplementedInterfaces.toList)
-            .toSet.toList.map((t: JSTypeExpression) =>  convertTypeRef(t, templateTypeNames)._2)
-          if (interfaces.isEmpty) {
-            if (simpleClassName == "Object" || simpleClassName == "Number" || simpleClassName == "Boolean")
-              List(TypeTree(typeOf[AnyRef]))
-            else
-              List(resolver("Object": TypeName))
-            // List(TypeTree(typeOf[AnyRef]))
-          } else {
-            interfaces
-          }
-        }
-
-        val cparams = getParams(info, rename = true)
-        val classDef = q"""
-          @scalaxy.js.global
-          class $className(..$cparams)
-              extends ..$parents {
-            ..$protoMembers
-          }
-        """
-        fixer.transform(classDef) :: companion
-      // }
-    }
-    result.map(fixer.transform(_))
+    } 
+    (tree: Tree) => fixer.transform(tree)
   }
+
   def generateGlobal(u: Universe)(variable: Scope.Var): List[Tree] = {
     Nil
   }

@@ -21,23 +21,22 @@ object ExternsGenerator extends App {
 
 	  val sigs = generator.generateSignatures[ru.Tree](sources, ownerName, filter)
 
-	  val src = "package " + ownerName + "\n" +
-		  sigs.mkString("\n")
-		  	.replaceAll("extends scala.AnyRef ", "")
-		  	.replaceAll("@new ", "@")
-		  	.replaceAll("""(?m)(?s)(class|trait) (\w+) ([^{]*\{).*?def (?:<init>|\$init\$)\(([^)]*)\) = \{[^}]*};?""",
-		  		"$1 $2($4) $3")
-		  	.replaceAll("""\(\) (class|object|abstract trait)""", "\n$1")
-		  	.replaceAll("abstract trait", "trait")
-		  	.replaceAll("""= \$qmark\$qmark\$qmark;?""", "= ???")
-		  	.replaceAll("""= _;""", "= _")
-		  	.replaceAll("""(trait|class) (\w+)\(\) """, "$1 $2 ")
-		  	.replaceAll("""(va[rl]) (_\w+)\b""", "$1 `$2`")
-		  	// .replaceAll(": Unit = ???;", "")
-		  	.replaceAll("""(?m)(?s)def <init>\(\) = \{.*?\};""", "")
-		  	.replaceAll("""(?m)(?s)def \$init\$\(\) = \{.*?\};""", "")
-		  	.replaceAll("""[:,] (Array)\[""", """: scala.$1[""")
-		  	.replaceAll("""\bOption\[""", """scala.Option[""")
+	  val src = sigs.toString
+	  	.replaceAll("extends scala.AnyRef ", "")
+	  	.replaceAll("@new ", "@")
+	  	.replaceAll("""(?m)(?s)(class|trait) (\w+) ([^{]*\{).*?def (?:<init>|\$init\$)\(([^)]*)\) = \{[^}]*};?""",
+	  		"$1 $2($4) $3")
+	  	.replaceAll("""\(\) (class|object|abstract trait)""", "\n$1")
+	  	.replaceAll("abstract trait", "trait")
+	  	.replaceAll("""= \$qmark\$qmark\$qmark;?""", "= ???")
+	  	.replaceAll("""= _;""", "= _")
+	  	.replaceAll("""(trait|class) (\w+)\(\) """, "$1 $2 ")
+	  	.replaceAll("""(va[rl]) (_\w+)\b""", "$1 `$2`")
+	  	// .replaceAll(": Unit = ???;", "")
+	  	.replaceAll("""(?m)(?s)def <init>\(\) = \{.*?\};""", "")
+	  	.replaceAll("""(?m)(?s)def \$init\$\(\) = \{.*?\};""", "")
+	  	.replaceAll("""[:,] (Array)\[""", """: scala.$1[""")
+	  	.replaceAll("""\bOption\[""", """scala.Option[""")
 
 	  // println(src)
 	  src

@@ -32,16 +32,11 @@ object JavaScriptExterns {
         // println("PATHS:\n\t" + paths.mkString(",\n\t"))
         val allExterns = SpecialCases.missingConstructors :: ClosureCompilerUtils.defaultExterns
 
-        val decls =
-          existingDecls ++
-          generator.generateSignatures[Tree](allExterns, name.toString)
+        generator.generateSignatures[Tree](
+      		allExterns,
+      		name.toString,
+      		extraDecls = existingDecls) :: Nil
 
-        List(
-          q"""
-            object $name extends scala.AnyRef {
-              ..$decls
-            }
-          """)
       case _ =>
         c.error(c.enclosingPosition, "This annotation can only be set on an object, found on: " + annottees.map(_.tree))
         Nil
