@@ -201,21 +201,16 @@ class TreesGenerator(val global: Universe) {
 
     def conv(t: JSType, templateTypeNames: Set[String]) = convertTypeRef(t, templateTypeNames)
 
-    def getParams(doc: JSDocInfo, templateTypeNames: Set[String], rename: Boolean = false): List[ValDef] = {
-      for ((paramName, i) <- doc.getParameterNames.toList.zipWithIndex) yield {
-        val paramType: JSType = doc.getParameterType(paramName)
-        val convType = conv(paramType, templateTypeNames)._2
-        assert(paramName.trim != "")
-        ValDef(
-          NoMods,
-          (if (rename) paramName + "$" else if (paramName.trim.isEmpty) "param" + i else paramName): TermName,
-          convType,
-          EmptyTree
-        )
-      }
+    def getParams(info: FunctionTypeInfo, rename: Boolean = false) = {
+    	for ((name, tpe) <- info.params) yield
+    		ValDef(
+  				NoMods,
+  				(if (rename) name + "$" else name): TermName,
+  				conv(tpe, info.templateParamsSet)._2,
+  				EmptyTree)
     }
 
-    val constructorDoc = classVars.constructor.flatMap(c => Option(c.getJSDocInfo))
+    val constructorInfo = classVars.constructor.flatMap(SomeFunctionTypeInfo.unapply(_))
 
     val className = simpleClassName: TypeName
     val companionName = simpleClassName: TermName
@@ -231,41 +226,22 @@ class TreesGenerator(val global: Universe) {
         assert(memberName.toString.trim != "")
         memberVar.getType match {
           case ft: FunctionType =>
-            //memberDoc
-            val retType = conv(ft.getReturnType, templateTypeNames)._2
-            val (vparams, isOverride) = Option(memberVar.getJSDocInfo) match {
-              case None if ft.getParameters.isEmpty =>
-                (Nil, false)
-              case None =>
-                // println("PARAMS(" + memberVar.getName + "): " + ft.getParameters.toList.map(p => p + ": " + p.getJSType).mkString(", "))
-                println("WARNING: " + memberVar.getName + " has no JSDoc")
-                (
-                  // for ((name, jsType) <- ft.parameters) yield {
-                  for ((p, i) <- ft.getParameters.toList.zipWithIndex) yield {
-                    val name = p.getString
-                    val jsType = p.getJSType
-                    ValDef(
-                      NoMods,
-                      (if (name.trim.isEmpty) "param" + i else name): TermName,
-                      conv(jsType, templateTypeNames)._2,
-                      EmptyTree
-                    )
-                  },
-                  false
-                )
-              case Some(memberDoc) =>
-                (
-                  getParams(memberDoc, templateTypeNames),
-                  memberDoc.isOverride
-                )
-            }
-            val mods =
-              if (isOverride && !invalidOverrideExceptions(memberVar.getName) ||
-                  missingOverrideExceptions(memberVar.getName))//.exists(_.unapplySeq(memberVar.getName) != None))
+          	val Some(info) = SomeFunctionTypeInfo.unapply(memberVar)
+          	var mods =
+              if (info.isOverride && !invalidOverrideExceptions(memberVar.getName) ||
+                  missingOverrideExceptions(memberVar.getName))
                 Modifiers(Flag.OVERRIDE)
               else
                 NoMods
-            DefDef(mods, memberName, Nil, List(vparams), retType, q"???")
+            if (info.isDeprecated)
+            	mods = NoMods.mapAnnotations(list => q"new scala.deprecated" :: list)
+            DefDef(
+            	mods,
+            	memberName,
+            	Nil,
+            	List(getParams(info)),
+            	conv(info.returnType, info.templateParamsSet)._2,
+            	q"???")
           case t =>
             val (mods, valType) = Option(t).map(conv(_, templateTypeNames)).getOrElse(NoMods -> TypeTree(typeOf[Any]))
             val vd = ValDef(mods, memberName, valType,
@@ -292,7 +268,7 @@ class TreesGenerator(val global: Universe) {
         case Block(List(Select(target, nme.CONSTRUCTOR)), value) =>
           Block(List(Apply(Select(target, nme.CONSTRUCTOR), Nil)), value)
         case ClassDef(mods, name, tparams, Template(parents, self, body)) if mods.hasFlag(Flag.TRAIT) =>
-          println("FOUND TRAIT")
+          // println("FOUND TRAIT")
           ClassDef(
             mods,
             name,
@@ -334,22 +310,18 @@ class TreesGenerator(val global: Universe) {
         }
       """)
 
-    val result = constructorDoc match {
-      case None =>
+    val result = (constructorInfo, constructorInfo.flatMap(_.doc)) match {
+      case (None, None) =>
         traitTree :: companion
       case _ if classVars.constructor.get.getType.isInterface =>
         traitTree :: companion
-      case Some(classDoc) =>
-        // val selfType: JSType = classDoc.getType
-        // println("CLASS(" + className + ") selfType = " + selfType + ", thisType = " + classDoc.getThisType + ", const.type = " + classVars.constructor.get.getType)
-        // if (!(selfType.isInstanceOf[ObjectType] && selfType.asInstanceOf[ObjectType].getTemplateTypes.isEmpty))
-        //   Nil
-        // else {
-        val templateTypeNames = classDoc.getTemplateTypeNames().toSet
+      case (Some(info), Some(doc)) =>
+        // TODO add template params from methods (e.g. for Array)
+        val templateTypeNames = info.templateParamsSet
 
         val parents = {
           val interfaces = 
-            (classDoc.getExtendedInterfaces.toList ++ classDoc.getImplementedInterfaces.toList)
+            (doc.getExtendedInterfaces.toList ++ doc.getImplementedInterfaces.toList)
             .toSet.toList.map((t: JSTypeExpression) =>  convertTypeRef(t, templateTypeNames)._2)
           if (interfaces.isEmpty) {
             if (simpleClassName == "Object" || simpleClassName == "Number" || simpleClassName == "Boolean")
@@ -361,9 +333,11 @@ class TreesGenerator(val global: Universe) {
             interfaces
           }
         }
+
+        val cparams = getParams(info, rename = true)
         val classDef = q"""
           @scalaxy.js.global
-          class $className(..${getParams(classDoc, templateTypeNames, true)})
+          class $className(..$cparams)
               extends ..$parents {
             ..$protoMembers
           }

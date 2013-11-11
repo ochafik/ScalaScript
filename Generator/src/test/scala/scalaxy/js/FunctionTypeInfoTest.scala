@@ -13,8 +13,20 @@ import com.google.javascript.jscomp._
 object FunctionTypeInfoTest {
 	def vars(src: String): (ClosureCompiler, List[Scope.Var]) = {
   	val srcName = "test.js"
-  	val compiler = ClosureCompilerUtils.scanExterns(List(SourceFile.fromCode(srcName, src)))
-    compiler -> compiler.scope.getVars.filter(_.getInputName.equals(srcName)).toList
+  	implicit val compiler = ClosureCompilerUtils.scanExterns(List(SourceFile.fromCode(srcName, src)))
+  	val vs = compiler.scope.getVars.filter(_.getInputName.equals(srcName)).toList
+  	for (v <- vs) {
+  		println("VAR: " + v)
+  		// println(s"\ttpe = ${v.getType}\n\tdoc = ${v.getJSDocInfo}")
+  		// Option(v.getType) collect {
+  		// 	case t: FunctionType =>
+  		// 		println("\tparams = " + t.getParameters)
+  		// }
+  		println("\t" + SomeFunctionTypeInfo.unapply(v))
+  		println("\t" + SomeFunctionTypeInfo.unapply(v.getType))
+  	}
+
+    compiler -> vs
   }
 }
 class FunctionTypeInfoTest {
@@ -53,17 +65,6 @@ class FunctionTypeInfoTest {
 		""")
 		import compiler._
 
-  	for (v <- vs) {
-  		println("VAR: " + v)
-  		// println(s"\ttpe = ${v.getType}\n\tdoc = ${v.getJSDocInfo}")
-  		// Option(v.getType) collect {
-  		// 	case t: FunctionType =>
-  		// 		println("\tparams = " + t.getParameters)
-  		// }
-  		println("\t" + SomeFunctionTypeInfo.unapply(v))
-  		println("\t" + SomeFunctionTypeInfo.unapply(v.getType))
-  	}
-
     val List(c, cproto, f, g, h, i) = vs
 
     {
@@ -98,6 +99,55 @@ class FunctionTypeInfoTest {
 	    assertEquals(None, info.thisTemplateParams)
 	    assertTrue(x.isNumber)
 	    assertTrue(y.isString)
+	  }
+  }
+
+  @Test
+  def simple2 {
+  	try {
+	  	implicit val (compiler, vs) = vars("""
+	      /** @constructor */
+	      var MyClass = function() {};
+
+	      /**
+	        * @this {!MyClass}
+	        * @param {number} a
+	        * @param {string} b
+	        * @param {?number} opt_c
+	        * @return {number}
+	        */
+	      MyClass.prototype.f = function(a, b, opt_c) {};
+
+	      /**
+	        * @type {function(number, string, ?number): number}
+	        */
+	      MyClass.prototype.g = function(a, b, opt_c) {};
+	    """)
+
+	    val List(c, cproto, f, g) = vs
+
+	    {
+		    val SomeFunctionTypeInfo(info) = f
+		    val List(("a", a), ("b", b), ("opt_c", c)) = info.params
+		    assertEquals(Nil, info.templateParams)
+		    assertEquals(None, info.thisTemplateParams)
+		    assertTrue("not a number: " + a, a.isNumber)
+		    assertTrue("not a string: " + b, b.isString)
+		    // assertTrue("not a number: " + c, c.isNumber)// && c.isOptional)
+		  }
+
+	    {
+		    val SomeFunctionTypeInfo(info) = g
+		    val List(("a", a), ("b", b), ("opt_c", c)) = info.params
+		    assertEquals(Nil, info.templateParams)
+		    assertEquals(None, info.thisTemplateParams)
+		    assertTrue("not a number: " + a, a.isNumber)
+		    assertTrue("not a string: " + b, b.isString)
+		    // assertTrue("not a number: " + c, c.isNumber)// && c.isOptional)
+		  }
+	  } catch { case ex: Throwable =>
+	  	ex.printStackTrace()
+	  	throw ex
 	  }
   }
 

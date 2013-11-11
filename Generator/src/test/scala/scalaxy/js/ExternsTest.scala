@@ -27,20 +27,25 @@ class ExternsTest {
   		""" /** @constructor */
           var MyClass = function() {};
 
-	        /** @this {MyClass}
-	          * @param a {number}
-	          * @param b {string}
-	          * @param opt_c {?number}
+	        /** @this {!MyClass}
+	          * @param {number} a
+	          * @param {string} b
+	          * @param {?number} opt_c
 	          * @return {number}
-	          */
-	        /** @type {function(number, string, ?number): number}
+	          * @override
 	          */
 	        MyClass.prototype.f = function(a, b, opt_c) {};
+
+	        /** @type {function(number, string, ?number): number}
+	          * @deprecated
+	          */
+	        MyClass.prototype.g = function(a, b, opt_c) {};
       """,
   		""" package js
   				@scalaxy.js.global
 	  			class MyClass extends js.Object {
-	  				def f(a: Double, b: String, c: java.lang.Double): Double = ???
+	  				override def f(a: Double, b: String, opt_c: scala.Option[Double]): Double = ???
+	  				@scala.deprecated() def g(a: Double, b: String, opt_c: scala.Option[Double]): Double = ???
 	  			}
   		""")
   }
@@ -48,13 +53,13 @@ class ExternsTest {
   def constructors {
   	checkConversion(
   		""" /** @constructor
-            * @param a {!Array.<number>}
+            * @param {!Array.<number>} a
             */
           var MyClass = function(a) {};
       """,
   		""" package js
 	  			@scalaxy.js.global
-	  			class MyClass(a: js.Array[Double]) extends js.Object {
+	  			class MyClass(a$: js.Array[Double]) extends js.Object {
 	  			}
   		""")
   }

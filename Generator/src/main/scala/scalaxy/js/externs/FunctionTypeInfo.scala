@@ -10,9 +10,15 @@ case class FunctionTypeInfo(
 		params: List[(String, JSType)],
 		returnType: JSType,
 		templateParams: List[String],
-		thisTemplateParams: Option[List[String]]) {
+		thisTemplateParams: Option[List[String]],
+		isOverride: Boolean,
+		isDeprecated: Boolean,
+		tpe: JSType,
+		doc: Option[JSDocInfo]) {
 
 	import ExtractorUtils._
+
+	lazy val templateParamsSet = templateParams.toSet
 
 	private def best[T](a: T, b: T)(isEmpty: T => Boolean)(default: => T): T =
 		if (isEmpty(a)) b
@@ -20,8 +26,8 @@ case class FunctionTypeInfo(
 		else default
 
 	def ++(info: FunctionTypeInfo) = {
-		println("THIS.params = " + params)
-		println("INFO.params = " + info.params)
+		// println("THIS.params = " + params)
+		// println("INFO.params = " + info.params)
 		FunctionTypeInfo(
 			params = best(params, info.params)(_.isEmpty) {
 				assert(params.size == info.params.size)
@@ -31,7 +37,11 @@ case class FunctionTypeInfo(
 			},
 			returnType = best(returnType, info.returnType)(typeIsEmpty)(returnType),
 			templateParams = best(templateParams, info.templateParams)(_.isEmpty)(templateParams),
-			thisTemplateParams = best(thisTemplateParams, info.thisTemplateParams)(_ == None)(thisTemplateParams)
+			thisTemplateParams = best(thisTemplateParams, info.thisTemplateParams)(_ == None)(thisTemplateParams),
+			isOverride = isOverride || info.isOverride,
+			isDeprecated = isDeprecated || info.isDeprecated,
+			tpe = best(tpe, info.tpe)(_ == null)(tpe),
+			doc = best(doc, info.doc)(_ == None)(doc)
 		)
 	}
 
@@ -60,12 +70,8 @@ object ExtractorUtils {
 	  					getTemplateTypes(x).orElse(alt(xs))
 	  			}
 	  			alt(t.getAlternates.toList)
-	  		//case t: TemplatizedType =>
 	  		case t: ObjectType =>
-	  			println("T = " + t)
-	  			val r = Option(t.getTemplateTypes).map(_.toList)
-	  			println("\tr = " + r)
-	  			r
+	  			Option(t.getTemplateTypes).map(_.toList)
 	  		case _ =>
 	  			// println(t.getClass.getName)
 	  			None
@@ -100,7 +106,11 @@ object SomeFunctionTypeInfo {
 	    },
 	    returnType = doc.getReturnType,
 	    templateParams = doc.getTemplateTypeNames.toList,
-	    thisTemplateParams = getTemplateParamsForThisType(doc))
+	    thisTemplateParams = getTemplateParamsForThisType(doc),
+			isOverride = doc.isOverride,
+			isDeprecated = doc.isDeprecated,
+			tpe = doc.getType,
+			doc = Some(doc))
 	}
 
 	def getFunctionInfo(tpe: FunctionType)(implicit compiler: ClosureCompiler) = {
@@ -111,7 +121,11 @@ object SomeFunctionTypeInfo {
 	    },
 	    returnType = tpe.getReturnType,
 	    templateParams = Nil,
-	    thisTemplateParams = None)
+	    thisTemplateParams = None,
+			isOverride = false,
+			isDeprecated = false,
+			tpe = tpe,
+			doc = None)
 	}
 
 	def unapply(tpe: JSType)
@@ -126,9 +140,11 @@ object SomeFunctionTypeInfo {
   private def getFunctionParamNames(n: Node): Option[List[String]] = {
   	if (!n.isFunction)
   		None
-		else
+		else {
+			// println("INIT VALUE: " + n + "\ntCHILDREN:\n\t" + n.children.toList.mkString("\n\t"))
 			n.children.find(_.isParamList).map(n => {
 				val cs = n.children
+				// println("PARAM LIST CHILDREN:\n\t" + cs.toList.mkString("\n\t"))
 				// Hack: n.toString gives:
 				//   NAME x 9 [source_file: test.js] : T
 				// But n.getString gives:
@@ -136,6 +152,7 @@ object SomeFunctionTypeInfo {
 				// So we cheat and remove anything after $
 				cs.toList.map(_.getString.replaceAll("""\$.*""", ""))
 			})
+		}
   }
 
 	def getFunctionInfo(n: Node): Option[FunctionTypeInfo] = {
@@ -144,7 +161,11 @@ object SomeFunctionTypeInfo {
 				params = for (n <- names) yield n -> (null: JSType),
 		    returnType = null,
 		    templateParams = Nil,
-		    thisTemplateParams = None)
+		    thisTemplateParams = None,
+				isOverride = false,
+				isDeprecated = false,
+				tpe = null,
+				doc = None)
 		}
 	}
 
@@ -157,7 +178,10 @@ object SomeFunctionTypeInfo {
 	 			val docInfo = Option(v.getJSDocInfo).map(getFunctionInfo(_))
 	 			val nodeInfo = Option(v.getInitialValue).flatMap(getFunctionInfo(_))
 
-	 			Seq(tpeInfo, docInfo, nodeInfo)
+	 			val infos = Seq(tpeInfo, docInfo, nodeInfo)
+	 			// println("INFOS(" + v + ") =\n\t" + infos.mkString("\n\t") + "\n")
+
+	 			infos
 	 				.flatten
 	 				.reduceLeft(_ ++ _)
 	 				.withNamedParams
