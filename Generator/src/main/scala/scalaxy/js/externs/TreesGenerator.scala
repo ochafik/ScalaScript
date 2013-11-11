@@ -39,23 +39,6 @@ class TreesGenerator(val global: Universe) {
   	mods
   }
 
-  // object FunctionType {
-  // 	def unapply(jsType: JSType): Option[(List[(String, JSType)], JSType)] = Option(jsType) collect {
-  // 		case ft: FunctionType =>
-	 //      val params = Option(jsType.getJSDocInfo) match {
-	 //        case None if ft.getParameters.isEmpty =>
-	 //          Nil
-	 //        case None =>
-	 //        	for ((p, i) <- ft.getParameters.toList.zipWithIndex) yield {
-  //             val name = p.getString
-  //           	(if (name.trim.isEmpty) "param" + i else name) -> p.getJSType
-  //           }
-	 //        case Some(memberDoc) =>
-	 //          getParams(memberDoc, templateTypeNames)
-	 //      }
-	 //      params -> ft.getReturnType
-  // 	}
-  // } 
   def optional(isOptional: Boolean, tpt: Tree): Tree = {
 	  if (isOptional)
 	    AppliedTypeTree(

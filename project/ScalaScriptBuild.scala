@@ -78,17 +78,17 @@ object ScalaScriptBuild extends Build {
     Seq(
       javacOptions ++= Seq("-Xlint:unchecked"),
       scalacOptions ++= Seq(
-        "-encoding", "UTF-8",
+        "-encoding", "UTF-8"
         // "-optimise",
-        "-deprecation",
-        "-Xlog-free-types",
+        // "-deprecation",
+        // "-Xlog-free-types",
         // "-Xlog-free-terms",
         // "-Yinfer-debug",
         //"-Xlog-implicits",
         //"-Ymacro-debug-lite", "-Ydebug",
         // "-Ymacro-debug-verbose",
-        "-feature",
-        "-unchecked"
+        // "-feature",
+        // "-unchecked"
       ),
       //scalacOptions in Test ++= Seq("-Xprint:typer"),
       //fork in Test := true,
@@ -145,7 +145,7 @@ object ScalaScriptBuild extends Build {
     	id = "scalascript-generator",
     	base = file("Generator"),
   		settings = reflectSettings ++ macroParadiseSettings ++ Seq(
-	      libraryDependencies += "com.google.javascript" % "closure-compiler" % "v20130722"
+	      libraryDependencies += "com.google.javascript" % "closure-compiler" % "v20131014"
 	    )
     ).dependsOn(core)
 
