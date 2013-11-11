@@ -30,10 +30,13 @@ case class FunctionTypeInfo(
 		// println("INFO.params = " + info.params)
 		FunctionTypeInfo(
 			params = best(params, info.params)(_.isEmpty) {
-				assert(params.size == info.params.size)
-				for (((n1, t1), (n2, t2)) <- params.zip(info.params)) yield {
-					best(n1, n2)(stringIsEmpty)(n1) -> best(t1, t2)(typeIsEmpty)(t1)
-				}
+				// assert(params.size == info.params.size, s"params = $params, other.params = ${info.params}")
+				if (params.size < info.params.size) info.params
+				if (params.size > info.params.size) params
+				else
+					for (((n1, t1), (n2, t2)) <- params.zip(info.params)) yield {
+						best(n1, n2)(stringIsEmpty)(n1) -> best(t1, t2)(typeIsEmpty)(t1)
+					}
 			},
 			returnType = best(returnType, info.returnType)(typeIsEmpty)(returnType),
 			templateParams = best(templateParams, info.templateParams)(_.isEmpty)(templateParams),
