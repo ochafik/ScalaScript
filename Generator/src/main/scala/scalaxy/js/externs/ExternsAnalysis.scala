@@ -44,19 +44,28 @@ object ExternsAnalysis {
     for (variable <- scope.getVars; if filter == null || filter(variable)) {
       variable.getName match {
         case memberRx(className, memberName) =>
+        	// println(s"MEMBER($className): $variable")
           if (!constructors.contains(className)) {
             println("Unknown class: " + className)
             // constructors(className) = new Scope.Var()
           }
           protoMembers(className) += variable
-        case staticMemberRx(className, memberName) if constructors.contains(className) =>
+
+        case staticMemberRx(className, memberName)
+        		if constructors.contains(className) =>
+        	// println(s"STATIC MEMBER($className): $variable")
           staticMembers(className) += variable
+
         case n =>
           variable.getType match {
-            case t: FunctionType if t.isConstructor || t.isInterface =>
+            case t: FunctionType
+            		if t.isConstructor || t.isInterface =>
+        			// println(s"CONSTRUCTOR($n): $variable")
               // println("Constructor for " + n + ": type = " + variable.getType + Option(variable.getType).map(": " + _.getClass.getName).getOrElse(""))
               constructors(n) = variable
+
             case _ =>
+        			// println(s"GLOBAL($n): $variable")
               globalVars(n) = variable
           }
       }

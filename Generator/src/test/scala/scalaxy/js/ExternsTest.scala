@@ -19,9 +19,13 @@ class ExternsTest {
   def checkConversion(externs: String, scalaSource: String) {
   	def rep(s: String) = s.trim.replaceAll("""(?m)^\s+""", "")
 
-  	assertEquals(rep(scalaSource), rep(conv(externs)))
+  	val c = conv(externs)
+  	// println("CONV: " + c)
+  	val r = rep(c)
+  	// println("REP: " + r)
+  	assertEquals(rep(scalaSource), r)
   }
-  @Test
+  // @Test
   def simple {
   	checkConversion(
   		""" /** @constructor */
@@ -48,14 +52,14 @@ class ExternsTest {
   		""" object js {
 	  				@scalaxy.js.global
 		  			class MyClass extends js.Object {
-		  				override def f(a: Double, b: String, c: java.lang.Double, opt_d: scala.Option[Double]): Double = ???
-		  				@scala.deprecated() def g(a: Double, b: String, c: java.lang.Double, opt_d: scala.Option[Double]): Double = ???
+		  				override def f(a: Double, b: String, c: java.lang.Double, opt_d: scala.Option[Double] = None): Double = ???
+		  				@scala.deprecated() def g(a: Double, b: String, c: java.lang.Double, opt_d: scala.Option[Double] = None): Double = ???
 		  			};
 		  			def alertMe(message: Any): Any = ???
 	  			}
   		""")
   }
-  @Test
+  // @Test
   def constructors {
   	checkConversion(
   		""" /** @constructor
@@ -66,6 +70,42 @@ class ExternsTest {
   		""" object js {
 		  			@scalaxy.js.global
 		  			class MyClass(a$: js.Array[Double]) extends js.Object {
+		  			}
+	  			}
+  		""")
+  }
+  // @Test
+  def classTemplates {
+  	checkConversion(
+  		""" /** @constructor
+            * @template T
+            */
+          var MyClass = function() {};
+      """,
+  		""" object js {
+		  			@scalaxy.js.global
+		  			class MyClass[T] extends js.Object {
+		  			}
+	  			}
+  		""")
+  }
+  @Test
+  def methodTemplates {
+  	checkConversion(
+  		""" /** @constructor
+            */
+          var MyClass = function() {};
+
+          /** @this {MyClass}
+            * @param {U} u
+            * @template U
+            */
+          MyClass.prototype.f = function(u) {};
+      """,
+  		""" object js {
+		  			@scalaxy.js.global
+		  			class MyClass extends js.Object {
+	  					def f[U](u: U): Any = ???
 		  			}
 	  			}
   		""")

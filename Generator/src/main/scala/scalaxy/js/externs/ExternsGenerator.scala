@@ -21,20 +21,22 @@ object ExternsGenerator extends App {
 
 	  val sigs = generator.generateSignatures[ru.Tree](sources, ownerName, filter)
 
+	  // Make the Scala pretty-printed trees prettier (compilable).
 	  val src = sigs.toString
 	  	.replaceAll("extends scala.AnyRef ", "")
 	  	.replaceAll("@new ", "@")
-	  	.replaceAll("""(?m)(?s)(class|trait) (\w+) ([^{]*\{).*?def (?:<init>|\$init\$)\(([^)]*)\) = \{[^}]*};?""",
-	  		"$1 $2($4) $3")
-	  	.replaceAll("""\(\) (class|object|abstract trait)""", "\n$1")
+	  	.replaceAll(""" >: Nothing <: Any""", "")
+	  	.replaceAll("""(?m)(?s)(class|trait|object) (\w+)(\[\w+(?:, \w+)*\])? ([^{]*\{).*?def (?:<init>|\$init\$)\(([^)]*)\) = \{[^}]*};?""",
+	  		"$1 $2$3($5) $4")
+	  	.replaceAll("""\(\) (class|object|abstract trait)""", "\n  $1")
 	  	.replaceAll("abstract trait", "trait")
 	  	.replaceAll("""= \$qmark\$qmark\$qmark;?""", "= ???")
 	  	.replaceAll("""= _;""", "= _")
-	  	.replaceAll("""(trait|class) (\w+)\(\) """, "$1 $2 ")
+	  	.replaceAll("""(trait|class|object) (\w+)(\[\w+(?:, \w+)*\])?\(\) """, "$1 $2$3 ")
 	  	.replaceAll("""(va[rl]) (_\w+)\b""", "$1 `$2`")
 	  	// .replaceAll(": Unit = ???;", "")
-	  	.replaceAll("""(?m)(?s)def <init>\(\) = \{.*?\};""", "")
-	  	.replaceAll("""(?m)(?s)def \$init\$\(\) = \{.*?\};""", "")
+	  	// .replaceAll("""(?m)(?s)def <init>\(\) = \{.*?\};""", "")
+	  	// .replaceAll("""(?m)(?s)def \$init\$\(\) = \{.*?\};""", "")
 	  	.replaceAll("""[:,] (Array)\[""", """: scala.$1[""")
 	  	.replaceAll("""\bOption\[""", """scala.Option[""")
 

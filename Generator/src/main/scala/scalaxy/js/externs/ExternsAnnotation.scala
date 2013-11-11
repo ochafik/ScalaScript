@@ -21,8 +21,7 @@ object JavaScriptExterns {
     val paths = pathTrees.map {
       case Literal(Constant(path: String)) => path
     }
-    println("PATHS:\n\t" + paths.mkString(",\n\t"))
-
+    // println("PATHS:\n\t" + paths.mkString(",\n\t"))
 
     val generator = new TreesGenerator(c.universe)
 
