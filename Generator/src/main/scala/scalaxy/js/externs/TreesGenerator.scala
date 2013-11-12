@@ -1,5 +1,6 @@
 package scalaxy.js
 
+import scala.util.Either
 import scala.collection.JavaConversions._
 import scala.reflect.api.Universe
 import com.google.javascript.jscomp._
@@ -63,16 +64,9 @@ class TreesGenerator(val global: Universe) {
   	mods
   }
 
-  def optional(isOptional: Boolean, tpt: Tree): Tree = {
-	  if (isOptional)
-	    AppliedTypeTree(
-	      Ident(rootMirror.staticClass("scala.Option")),
-	      List(tpt))
-	  else
-	    tpt
-  }
+  
 
-  def functionTypeTree(paramTpts: List[Tree], returnTpt: Tree): Tree =
+  def functionTypeTree(returnTpt: Tree, paramTpts: List[Tree]): Tree =
   	AppliedTypeTree(
       Ident(
       	rootMirror.staticClass(
@@ -86,20 +80,73 @@ class TreesGenerator(val global: Universe) {
     	resolver("Array": TypeName),
     	List(elementType))
 
-  case class ConvertedType(mods: Modifiers, tpt: Tree, isOptional: Boolean = false)
+  def functionType(returnTpe: Type, paramTpes: List[Type]): Type =
+  	appliedType(
+  		rootMirror.staticClass(
+  			"scala.Function" +
+  			(if (paramTpes.isEmpty) "" else paramTpes.size)
+			).asType.toType,
+  		paramTpes :+ returnTpe)
+
+  def arrayType(elementType: Type): Type =
+  	appliedType(typeOf[Array[_]], List(elementType))
+
+  def alternativeType(a: Type, b: Type): Type =
+  	appliedType(typeOf[Either[_, _]], List(a, b))
+              // Applied
+              //   //Ident(rootMirror.staticClass("scala.util.Either")),
+              //   Ident(rootMirror.staticClass("scala.util.Either")),
+              //   // TODO: alternatives in separate dependency
+              //   // Ident(rootMirror.staticClass("scalaxy.js.|")),
+              //   List(a, b)
+              // )
+
+  case class ConvertedType(mods: Modifiers, tpe: Type, tpt: Tree, isOptional: Boolean = false)
 
   private def convertTypeRef(jsType: JSType,
-  													 templateTypeNames: Set[String],
-  													 nullable: Boolean = false)
-				  									(implicit externs: ClosureCompiler, resolver: Resolver)
-				  									: ConvertedType = {
+		  											 templateTypeNames: Set[String],
+		  											 nullable: Boolean = false)
+						  							(implicit externs: ClosureCompiler, resolver: Resolver)
+						  						  : ConvertedType = {
   	import externs._
 
   	val mods = getMods(jsType)
-  	def conv(tpt: Tree, isOptional: Boolean = false) =
-  		ConvertedType(mods, tpt, isOptional = isOptional)
+  	def conv(tpe: Type, tpt: Tree = null, isOptional: Boolean = false): ConvertedType =
+  		ConvertedType(mods, tpe = tpe, tpt = Option(tpt).getOrElse(TypeTree(tpe)), isOptional = isOptional)
 
-  	def default = conv(TypeTree(if (nullable) typeOf[AnyRef] else typeOf[Any]))
+  	def default = conv(if (nullable) typeOf[AnyRef] else typeOf[Any])
+
+  	def optional(isOptional: Boolean, c: ConvertedType) = {
+		  if (isOptional)
+		  	ConvertedType(
+	  			mods,
+	  			tpe = appliedType(typeOf[Option[_]], List(c.tpe)),
+	  			tpt = AppliedTypeTree(
+			      Ident(rootMirror.staticClass("scala.Option")),
+			      List(c.tpt)),
+	  			isOptional = isOptional)
+		  else
+		    c
+	  }
+	  def function(ret: ConvertedType, args: List[ConvertedType]) =
+	  	ConvertedType(
+  			mods,
+  			tpe = functionType(ret.tpe, args.map(_.tpe)),
+  			tpt = functionTypeTree(ret.tpt, args.map(_.tpt)))
+
+	  def array(elementType: ConvertedType) =
+	  	ConvertedType(
+  			mods,
+  			tpe = arrayType(elementType.tpe),
+  			tpt = arrayTypeTree(elementType.tpt))
+
+  	def alternative(a: ConvertedType, b: ConvertedType) =
+	  	ConvertedType(
+  			mods,
+  			tpe = appliedType(typeOf[Either[_, _]], List(a.tpe, b.tpe)),
+  			tpt = AppliedTypeTree(
+		      Ident(rootMirror.staticClass("scala.util.Either")),
+		      List(a.tpt, b.tpt)))
     // println(s"jsType = $jsType (${Option(jsType).map(_.getClass.getName)}, jsDocInfo = ${Option(jsType).map(_.getJSDocInfo).orNull}")
 
   	def convertType(t: JSType): ConvertedType = t match {
@@ -107,10 +154,10 @@ class TreesGenerator(val global: Universe) {
       	default
 
       case t if templateTypeNames(t.toString) =>
-      	conv(Ident(t.toString: TypeName))
+      	conv(typeOf[Any], Ident(t.toString: TypeName))
 
       case (_: VoidType) | (_: NoType) =>
-        conv(TypeTree(typeOf[Unit]))
+        conv(typeOf[Unit])
 
       case (_: AllType) | (_: UnknownType) => //  | (_: NoType)
       	(
@@ -119,16 +166,16 @@ class TreesGenerator(val global: Universe) {
   			).getOrElse(default)
 
       case t: NullType =>
-        conv(TypeTree(typeOf[Null]))
+        conv(typeOf[Null])
 
       case t: BooleanType =>
-      	conv(TypeTree(if (nullable) typeOf[java.lang.Boolean] else typeOf[Boolean]))
+      	conv(if (nullable) typeOf[java.lang.Boolean] else typeOf[Boolean])
 
       case t: NumberType =>
-      	conv(TypeTree(if (nullable) typeOf[java.lang.Double] else typeOf[Double]))
+      	conv(if (nullable) typeOf[java.lang.Double] else typeOf[Double])
 
       case t: StringType =>
-        conv(TypeTree(typeOf[String]))
+        conv(typeOf[String])
 
       case t: UnionType =>
         var hasNull = false
@@ -144,35 +191,66 @@ class TreesGenerator(val global: Universe) {
             true
         })
         val convertedAlts =
-        	alts.map(t => convertTypeRef(t, templateTypeNames, nullable = hasNull).tpt)
+        	alts.map(t => convertTypeRef(t, templateTypeNames, nullable = hasNull))
 
-        val union = convertedAlts match {
+        val union: ConvertedType = convertedAlts match {
           case List(t) =>
             t
           case ts =>
             // println("Reducing types: " + ts.mkString(", ") + " (jsType = " + jsType + ")")
-            ts.reduceLeft((a, b) => {
-              AppliedTypeTree(
-                //Ident(rootMirror.staticClass("scala.util.Either")),
-                Ident(rootMirror.staticClass("scala.util.Either")),
-                // TODO: alternatives in separate dependency
-                // Ident(rootMirror.staticClass("scalaxy.js.|")),
-                List(a, b)
-              )
-            })
+            ts.reduceLeft((a, b) => alternative(a, b))
         }
 
-        conv(optional(hasUndefined, union), hasUndefined)
+        optional(hasUndefined, union)
 
       case t: FunctionType =>
       	val parameters = t.parameters
-      	val returnType = convertTypeRef(t.getReturnType, templateTypeNames).tpt
+      	val returnType = convertTypeRef(t.getReturnType, templateTypeNames)
 
       	val actualParams =
-        	if (parameters.isEmpty) List(TypeTree(typeOf[Array[Any]]))
-        	else parameters.map(p => convertTypeRef(p._2, templateTypeNames).tpt)
+        	if (parameters.isEmpty) List(conv(typeOf[Array[Any]]))
+        	else parameters.map(p => convertTypeRef(p._2, templateTypeNames))
 
-        conv(optional(nullable, functionTypeTree(actualParams, returnType)), nullable)
+        optional(nullable, function(returnType, actualParams))
+
+      case t: ObjectType if t.isRecordType =>
+      	// TODO create refined type that matches record
+      	// val symbols: List[Symbol] = 
+      	// 	for (p <- t.getPropertyNames.toList.sorted;
+	      // 			 jsType = t.getPropertyType(p)) yield {
+      	// 		val info = SomeFunctionTypeInfo.unapply(jsType)
+      	// 			.getOrElse(FunctionTypeInfo(jsType = jsType))
+	      // 		val t = MethodType(
+	      // 			info.params.map(p => convertTypeRef(p._2, info.templateParamsSet).tpe.typeSymbol),
+	      // 			convertTypeRef(info.returnType, info.templateParamsSet).tpe)
+	      // 		println("FOUND PROP " + p + ": " + jsType + " -> " + t)
+	      // 		t.typeSymbol
+	      // 	}
+      	// val ref = conv(RefinedType(Nil, newScopeWith(symbols: _*)))
+      	// println("REFINED TYPE: " + ref)
+      	// ref
+      	val memberSigs: List[String] = 
+      		for (p <- t.getPropertyNames.toList.sorted;
+	      			 jsType = t.getPropertyType(p)) yield {
+      			val info = SomeFunctionTypeInfo.unapply(jsType)
+      				.getOrElse(FunctionTypeInfo(jsType = jsType))
+
+      			val retSig = convertTypeRef(info.returnType, info.templateParamsSet).tpt.toString
+      		  var paramSigs = info.params.map {
+      				case (n, t) => n + ": " + convertTypeRef(t, info.templateParamsSet).tpt.toString
+    				} mkString (", ")
+    				if (!paramSigs.isEmpty)
+    					paramSigs = "(" + paramSigs + ")"
+
+    				s"""def $p$paramSigs: $retSig"""
+	      	}
+      	val sig = memberSigs.mkString("{ ", "; ", " }")
+  	  	conv(
+  	  		typeOf[Any],
+	  			Annotated(
+  					q"""new deprecated("record", $sig)""",
+	  				TypeTree(typeOf[Any])))
+      	// default
 
       case t: ObjectType =>
         val n = t.getDisplayName
@@ -181,24 +259,27 @@ class TreesGenerator(val global: Universe) {
         	// println(s"t.getTemplateTypes = ${t.getTemplateTypes}")
         	// println(s"t.parameters = ${t.parameters})")
           // println(s"t.getJSDocInfo.parameters = ${t.getJSDocInfo.parameters})")
-          conv((n, Option(t.getTemplateTypes).map(_.toList).getOrElse(Nil)) match {
+          (n, Option(t.getTemplateTypes).map(_.toList).getOrElse(Nil)) match {
             case ("Array", elementTypes) =>
-            	arrayTypeTree(
+            	array(
             		elementTypes match {
 	            		case List(elementType) =>
-	            			convertTypeRef(elementType, templateTypeNames).tpt
+	            			convertTypeRef(elementType, templateTypeNames)
 	          			case Nil =>
-	          				TypeTree(typeOf[Any])
+	          				conv(typeOf[Any])
 	      				})
+
             case ("Object", _) =>
-              TypeTree(typeOf[AnyRef])
+              conv(typeOf[AnyRef])
+
             case (_, Nil) if n != null =>
-              Option(resolver).map(_(n: TypeName)).getOrElse {
+              conv(typeOf[Any], Option(resolver).map(_(n: TypeName)).getOrElse {
                 Ident(n: TypeName)
-              }
+              })
+
             case _ =>
               sys.error("Template type not handled for type " + n + ": " + jsType + " (: " + jsType.getClass.getName + "; isRecordType = " + jsType.isRecordType + ")")
-          })
+          }
         }
     }
 
@@ -208,7 +289,7 @@ class TreesGenerator(val global: Universe) {
   def defaultValue(tpe: Type): Any = {
   	import definitions._
 
-  	tpe.normalize match {
+  	Option(tpe).map(_.normalize).orNull match {
 	    case IntTpe => 0
 	    case BooleanTpe => false
 	    case ByteTpe => 0: Byte
@@ -266,7 +347,7 @@ class TreesGenerator(val global: Universe) {
 
         case t =>
           val conv = Option(t).map(convertTypeRef(_, templateTypeNames))
-          	.getOrElse(ConvertedType(NoMods, TypeTree(typeOf[Any])))
+          	.getOrElse(ConvertedType(NoMods, typeOf[Any], TypeTree(typeOf[Any])))
           val vd = ValDef(conv.mods, memberName, conv.tpt,
         		if (conv.mods.hasFlag(Flag.MUTABLE)) EmptyTree
         		else Literal(Constant(defaultValue(conv.tpt.tpe))))
@@ -306,8 +387,9 @@ class TreesGenerator(val global: Universe) {
     val companionName: TermName = simpleClassName
 
     val (protoMembers, functionInfos: List[Option[FunctionTypeInfo]]) =
-    	classVars.protoMembers.map(convertMember(_)).unzip
-    val staticMembers = classVars.staticMembers.filter(!_.getName.endsWith(".prototype")).map(convertMember(_)._1)
+    	classVars.protoMembers.sortBy(_.getName).map(convertMember(_)).unzip
+    val staticMembers =
+    	classVars.staticMembers.sortBy(_.getName).filter(!_.getName.endsWith(".prototype")).map(convertMember(_)._1)
 
     // println("PROTO MEMBERS:\n\t" + protoMembers.mkString("\n\t"))
     // println("FUNCTION INFOS:\n\t" + functionInfos.mkString("\n\t"))
@@ -347,7 +429,7 @@ class TreesGenerator(val global: Universe) {
         }
       """)
 
-    val result = (constructorInfo, constructorInfo.flatMap(_.doc)) match {
+    val result = (constructorInfo, constructorInfo.flatMap(_.jsDocInfo)) match {
       case (None, None) =>
         traitTree :: companion
       case _ if classVars.constructor.get.getType.isInterface =>

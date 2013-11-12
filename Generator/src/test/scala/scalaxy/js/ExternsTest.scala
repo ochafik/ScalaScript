@@ -25,7 +25,7 @@ class ExternsTest {
   	// println("REP: " + r)
   	assertEquals(rep(scalaSource), r)
   }
-  // @Test
+  @Test
   def simple {
   	checkConversion(
   		""" /** @constructor */
@@ -59,7 +59,7 @@ class ExternsTest {
 	  			}
   		""")
   }
-  // @Test
+  @Test
   def constructors {
   	checkConversion(
   		""" /** @constructor
@@ -74,7 +74,7 @@ class ExternsTest {
 	  			}
   		""")
   }
-  // @Test
+  @Test
   def classTemplates {
   	checkConversion(
   		""" /** @constructor
@@ -107,6 +107,17 @@ class ExternsTest {
 		  			class MyClass extends js.Object {
 	  					def f[U](u: U): Any = ???
 		  			}
+	  			}
+  		""")
+  }
+  @Test
+  def records {
+  	checkConversion(
+  		""" /** @type {{a}} */
+          var x;
+      """,
+  		""" object js {
+		  			var x: { def a: Any } = _
 	  			}
   		""")
   }

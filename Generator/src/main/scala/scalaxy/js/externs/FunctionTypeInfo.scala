@@ -7,14 +7,14 @@ import com.google.javascript.rhino._
 import com.google.javascript.rhino.jstype._
 
 case class FunctionTypeInfo(
-		params: List[(String, JSType)],
-		returnType: JSType,
-		templateParams: List[String],
-		thisTemplateParams: Option[List[String]],
-		isOverride: Boolean,
-		isDeprecated: Boolean,
-		tpe: JSType,
-		doc: Option[JSDocInfo]) {
+		params: List[(String, JSType)] = Nil,
+		returnType: JSType = null,
+		templateParams: List[String] = Nil,
+		thisTemplateParams: Option[List[String]] = None,
+		isOverride: Boolean = false,
+		isDeprecated: Boolean = false,
+		jsType: JSType,
+		jsDocInfo: Option[JSDocInfo] = None) {
 
 	import ExtractorUtils._
 
@@ -43,8 +43,8 @@ case class FunctionTypeInfo(
 			thisTemplateParams = best(thisTemplateParams, info.thisTemplateParams)(_ == None)(thisTemplateParams),
 			isOverride = isOverride || info.isOverride,
 			isDeprecated = isDeprecated || info.isDeprecated,
-			tpe = best(tpe, info.tpe)(_ == null)(tpe),
-			doc = best(doc, info.doc)(_ == None)(doc)
+			jsType = best(jsType, info.jsType)(_ == null)(jsType),
+			jsDocInfo = best(jsDocInfo, info.jsDocInfo)(_ == None)(jsDocInfo)
 		)
 	}
 
@@ -112,8 +112,8 @@ object SomeFunctionTypeInfo {
 	    thisTemplateParams = getTemplateParamsForThisType(doc),
 			isOverride = doc.isOverride,
 			isDeprecated = doc.isDeprecated,
-			tpe = doc.getType,
-			doc = Some(doc))
+			jsType = doc.getType,
+			jsDocInfo = Some(doc))
 	}
 
 	def getFunctionInfo(tpe: FunctionType)(implicit compiler: ClosureCompiler) = {
@@ -127,8 +127,8 @@ object SomeFunctionTypeInfo {
 	    thisTemplateParams = None,
 			isOverride = false,
 			isDeprecated = false,
-			tpe = tpe,
-			doc = None)
+			jsType = tpe,
+			jsDocInfo = None)
 	}
 
 	def unapply(tpe: JSType)
@@ -167,8 +167,8 @@ object SomeFunctionTypeInfo {
 		    thisTemplateParams = None,
 				isOverride = false,
 				isDeprecated = false,
-				tpe = null,
-				doc = None)
+				jsType = null,
+				jsDocInfo = None)
 		}
 	}
 
@@ -188,6 +188,9 @@ object SomeFunctionTypeInfo {
 	 				.flatten
 	 				.reduceLeft(_ ++ _)
 	 				.withNamedParams
+
+			// case jsType =>
+			// 	sys.error("TYPE NOT A FUNC: " + tpe + " (: " + tpe.getClass.getName + ")")
 	 	}
 	}
 }

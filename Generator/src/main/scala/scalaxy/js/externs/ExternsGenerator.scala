@@ -26,6 +26,7 @@ object ExternsGenerator extends App {
 	  	.replaceAll("extends scala.AnyRef ", "")
 	  	.replaceAll("@new ", "@")
 	  	.replaceAll(""" >: Nothing <: Any""", "")
+	  	.replaceAll("""Any @deprecated\("record","([^"]+)"\)""", "$1")
 	  	.replaceAll("""(?m)(?s)(class|trait|object) (\w+)(\[\w+(?:, \w+)*\])? ([^{]*\{).*?def (?:<init>|\$init\$)\(([^)]*)\) = \{[^}]*};?""",
 	  		"$1 $2$3($5) $4")
 	  	.replaceAll("""\(\) (class|object|abstract trait)""", "\n  $1")
