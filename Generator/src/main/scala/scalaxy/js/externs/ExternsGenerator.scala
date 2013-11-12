@@ -14,38 +14,55 @@ import scala.collection.JavaConversions._
 
 object ExternsGenerator extends App {
 
+	// Make the Scala pretty-printed trees prettier (compilable).
+  def postProcessPrintedTree(s: String): String = {
+		s
+			.replaceAll("extends scala.AnyRef ", "")
+	  	.replaceAll("@new ", "@")
+	  	.replaceAll(""" >: Nothing <: Any""", "")
+	  	.replaceAll("""Any @deprecated\("record","([^"]+)"\)""", "$1")
+	  	//.replaceAll("""(?m)(?:class|trait|object) (?:\w+) extends [\w.]+$""", "$0 {\n}")
+	  	.replaceAll("""(?m)(?s)(class|trait|object) (\w+)(\[\w+(?:, \w+)*\])? extends ([^ \n]+) ([^\n{]*?\{).*?def (?:<init>|\$init\$)(\([^)]*\)) = \{\s*super.(?:<init>|\$init\$)(\([^)]*\))[^}]*};?""",
+	  		"$1 $2$3$6 extends $4$7 $5")
+	  	.replaceAll("""(?m)(?s)(class|trait|object) (\w+)(\[\w+(?:, \w+)*\])? ([^\n{]*?\{).*?def (?:<init>|\$init\$)(\([^)]*\)) = \{[^}]*};?""",
+	  		"$1 $2$3$5 $4")
+	  	.replaceAll("""\(\) (class|object|abstract trait)""", "\n  $1")
+	  	.replaceAll("abstract trait", "trait")
+	  	.replaceAll("""= \$qmark\$qmark\$qmark;?""", "= ???")
+	  	.replaceAll("""= _;""", "= _")
+	  	.replaceAll("""(trait|class|object) (\w+)(\[\w+(?:, \w+)*\])?\(\) """, "$1 $2$3 ")
+	  	.replaceAll("""\b(def|va[rl]) (_\w+)\b""", "$1 `$2`")
+	  	// .replaceAll(": Unit = ???;", "")
+	  	// .replaceAll("""(?m)(?s)def <init>\(\) = \{.*?\};""", "")
+	  	// .replaceAll("""(?m)(?s)def \$init\$\(\) = \{.*?\};""", "")
+	  	.replaceAll("""(?<=\w)\$(?!\w)""", "") // Constructor params...
+	  	.replaceAll("""[:,] (Array)\[""", """: scala.$1[""")
+	  	.replaceAll("""\bOption\[""", """scala.Option[""")
+	}
 	def generate(sources: List[SourceFile], ownerName: String = "js", filter: Scope.Var => Boolean = null): String = {
 
 		import scala.reflect.runtime.{ universe => ru }
 	  val generator = new TreesGenerator(ru)
 
 	  val sigs = generator.generateSignatures[ru.Tree](sources, ownerName, filter)
+	  // println(sigs)
 
-	  // Make the Scala pretty-printed trees prettier (compilable).
-	  val src = sigs.toString
-	  	.replaceAll("extends scala.AnyRef ", "")
-	  	.replaceAll("@new ", "@")
-	  	.replaceAll(""" >: Nothing <: Any""", "")
-	  	.replaceAll("""Any @deprecated\("record","([^"]+)"\)""", "$1")
-	  	.replaceAll("""(?m)(?s)(class|trait|object) (\w+)(\[\w+(?:, \w+)*\])? ([^{]*\{).*?def (?:<init>|\$init\$)\(([^)]*)\) = \{[^}]*};?""",
-	  		"$1 $2$3($5) $4")
-	  	.replaceAll("""\(\) (class|object|abstract trait)""", "\n  $1")
-	  	.replaceAll("abstract trait", "trait")
-	  	.replaceAll("""= \$qmark\$qmark\$qmark;?""", "= ???")
-	  	.replaceAll("""= _;""", "= _")
-	  	.replaceAll("""(trait|class|object) (\w+)(\[\w+(?:, \w+)*\])?\(\) """, "$1 $2$3 ")
-	  	.replaceAll("""(va[rl]) (_\w+)\b""", "$1 `$2`")
-	  	// .replaceAll(": Unit = ???;", "")
-	  	// .replaceAll("""(?m)(?s)def <init>\(\) = \{.*?\};""", "")
-	  	// .replaceAll("""(?m)(?s)def \$init\$\(\) = \{.*?\};""", "")
-	  	.replaceAll("""[:,] (Array)\[""", """: scala.$1[""")
-	  	.replaceAll("""\bOption\[""", """scala.Option[""")
-
+	  val src = postProcessPrintedTree(sigs.toString)
 	  // println(src)
 	  src
 	}
 
-  println(generate(ClosureCompilerUtils.defaultExterns))
+	{
+		val src = generate(ClosureCompilerUtils.defaultExterns :+ SpecialCases.missingConstructors)
+		import java.io._
+		val f = new File("../../out.scala")
+		val out = new PrintStream(f)
+		out.println(src)
+		out.close()
+		println("WROTE " + f)
+		System.exit(0)
+	  // println(src)
+	}
 }
 
 

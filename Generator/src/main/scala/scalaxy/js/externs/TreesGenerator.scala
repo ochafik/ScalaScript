@@ -21,20 +21,25 @@ class TreesGenerator(val global: Universe) {
   	: T = {
 
   	val packageName: TermName = ownerName
-  	implicit val externs = ClosureCompilerUtils.scanExterns(sources)
+  	implicit val compiler = ClosureCompilerUtils.scanExterns(sources)
     implicit val resolver = Resolver((simpleName: Name) => {
       Select(Ident(packageName), simpleName)
     })
-    val globalVars = ExternsAnalysis.analyze(externs, filter)
+    val globalVars = ExternsAnalysis.analyze(compiler, filter)
 
     // println("\n\nGLOBAL VARS:\n" + globalVars + "\n\n")
 
-    val generatedDecls: List[Tree] = globalVars.classes.flatMap(classVars => {
-      generateClass(classVars, packageName)
-    })
+    val generatedDecls: List[Tree] =
+    	globalVars.classes.values.toList.sortBy(_.className).flatMap(generateClass(_, globalVars, packageName))
+
+    // TODO: namespaces
     val generatedGlobals: List[Tree] = globalVars
     	.globalVars
-    	.filterNot(_.getName.contains(".")) // TODO: namespaces
+    	.filterNot(v => {
+    		val n = v.getName
+    		n.contains(".") || n == "java"
+  		})
+    	.sortBy(_.getName)
     	.flatMap(v =>
     		try { Some(convertMember(v)._1) }
     		catch { case ex: Throwable => None })
@@ -213,10 +218,10 @@ class TreesGenerator(val global: Universe) {
 
         optional(nullable, function(returnType, actualParams))
 
-      case t: ObjectType if t.isRecordType =>
+      case t: ObjectType if t.getDisplayName == null && t.isRecordType =>
       	// TODO create refined type that matches record
       	// val symbols: List[Symbol] = 
-      	// 	for (p <- t.getPropertyNames.toList.sorted;
+      	// 	for (p <- t.getOwnPropertyNames.toList.sorted;
 	      // 			 jsType = t.getPropertyType(p)) yield {
       	// 		val info = SomeFunctionTypeInfo.unapply(jsType)
       	// 			.getOrElse(FunctionTypeInfo(jsType = jsType))
@@ -230,7 +235,7 @@ class TreesGenerator(val global: Universe) {
       	// println("REFINED TYPE: " + ref)
       	// ref
       	val memberSigs: List[String] = 
-      		for (p <- t.getPropertyNames.toList.sorted;
+      		for (p <- t.getOwnPropertyNames.toList.sorted;
 	      			 jsType = t.getPropertyType(p)) yield {
       			val info = SomeFunctionTypeInfo.unapply(jsType)
       				.getOrElse(FunctionTypeInfo(jsType = jsType))
@@ -303,7 +308,7 @@ class TreesGenerator(val global: Universe) {
 	}
 
   def getParams(info: FunctionTypeInfo, rename: Boolean = false)
-  						 (implicit externs: ClosureCompiler, resolver: Resolver) = {
+  						 (implicit compiler: ClosureCompiler, resolver: Resolver) = {
   	for ((name, jsType) <- info.params) yield {
   		val conv = convertTypeRef(jsType, info.templateParamsSet)
   		ValDef(
@@ -315,7 +320,7 @@ class TreesGenerator(val global: Universe) {
   }
 
   def convertMember(memberVar: Scope.Var)
-  								 (implicit externs: ClosureCompiler, resolver: Resolver): (Tree, Option[FunctionTypeInfo]) = {
+  								 (implicit compiler: ClosureCompiler, resolver: Resolver): (Tree, Option[FunctionTypeInfo]) = {
     val memberName: TermName = memberVar.getName.split("\\.").last
     val templateTypeNames = Option(memberVar.getJSDocInfo).map(_.getTemplateTypeNames().toSet).getOrElse(Set())
 
@@ -324,7 +329,7 @@ class TreesGenerator(val global: Universe) {
     else {
       assert(memberName.toString.trim != "")
       memberVar.getType match {
-        case ft: FunctionType =>
+      	case ft: FunctionType =>
         	val optInfo @ Some(info) = SomeFunctionTypeInfo.unapply(memberVar)
         	var mods =
             if (info.isOverride && !invalidOverrideExceptions(memberVar.getName) ||
@@ -335,7 +340,9 @@ class TreesGenerator(val global: Universe) {
           if (info.isDeprecated)
           	mods = NoMods.mapAnnotations(list => q"new scala.deprecated" :: list)
 
-          val thisTemplateParamsSet = info.thisTemplateParams.getOrElse(Nil).toSet
+          val thisTemplateParamsSet =
+          	if (memberVar.getName.startsWith("Array.prototype.")) Set("T")
+          	else info.thisTemplateParams.getOrElse(Nil).toSet
 
           DefDef(
           	mods,
@@ -344,6 +351,11 @@ class TreesGenerator(val global: Universe) {
           	List(getParams(info)),
           	convertTypeRef(info.returnType, info.templateParamsSet).tpt,
           	q"???") -> optInfo
+
+        case t if memberVar.getJSDocInfo != null && memberVar.getJSDocInfo.hasTypedefType() =>
+        	import compiler._
+        	TypeDef(NoMods, memberVar.getName: TypeName, Nil,
+      			convertTypeRef(memberVar.getJSDocInfo.getTypedefType, Set()).tpt) -> None
 
         case t =>
           val conv = Option(t).map(convertTypeRef(_, templateTypeNames))
@@ -368,10 +380,10 @@ class TreesGenerator(val global: Universe) {
 			TypeBoundsTree(Ident(scalaNothing), Ident(scalaAny))
 		)
 
-  def generateClass(classVars: ClassVars, owner: Name)
-  								 (implicit externs: ClosureCompiler, resolver: Resolver)
+  def generateClass(classVars: ClassVars, globalVars: GlobalVars, owner: Name)
+  								 (implicit compiler: ClosureCompiler, resolver: Resolver)
   								 : List[Tree] = {
-    import externs._
+    import compiler._
 
     val (fullClassName, packageName, simpleClassName) = classVars.className match {
       case fullClassName @ qualNameRx(packageName, simpleClassName) =>
@@ -397,8 +409,13 @@ class TreesGenerator(val global: Universe) {
     val tparamDefs = {
     	val inferredTemplateParams: List[List[String]] =
     		functionInfos.flatten.flatMap(_.thisTemplateParams)
+
+    	var ctparams = constructorInfo.map(_.templateParams)
+    	if (simpleClassName == "Array")
+    		ctparams = Some(List("T"))
+
     	val set: Set[List[String]] =
-    		(inferredTemplateParams ++ constructorInfo.map(_.templateParams))
+    		(inferredTemplateParams ++ ctparams)
     			.filterNot(_.isEmpty).toSet
     	set.toList match {
     		case Nil => Nil
@@ -415,7 +432,7 @@ class TreesGenerator(val global: Universe) {
       else
         //def apply(..${getParams(classDoc)}): $className = ???
         q"""
-          @scalaxy.js.global
+          //@scalaxy.js.global
           object $companionName {
             ..$staticMembers
           }
@@ -423,7 +440,7 @@ class TreesGenerator(val global: Universe) {
 
     lazy val traitTree =
       fixQuasiquotesInitSuperCall(q"""
-        @scalaxy.js.global
+        //@scalaxy.js.global
         trait $className {
           ..$protoMembers
         }
@@ -438,33 +455,56 @@ class TreesGenerator(val global: Universe) {
         // TODO add template params from methods (e.g. for Array)
         val templateTypeNames = info.templateParamsSet
 
-        val parents = {
-          val interfaces =
-            (doc.getExtendedInterfaces.toList ++ doc.getImplementedInterfaces.toList)
-            .toSet.toList.map((t: JSTypeExpression) =>  convertTypeRef(t, templateTypeNames).tpt)
-          if (interfaces.isEmpty) {
-            if (simpleClassName == "Object" || simpleClassName == "Number" || simpleClassName == "Boolean")
-              List(TypeTree(typeOf[AnyRef]))
-            else
-              List(resolver("Object": TypeName))
-            // List(TypeTree(typeOf[AnyRef]))
-          } else {
-            interfaces
+      	val (base: Tree, baseArgs: List[Tree]) =
+      		Option(doc.getBaseType).map(t => {
+      			val baseConstructorInfoOpt =
+      				Option(t.getDisplayName)
+      					.flatMap(globalVars.classes.get(_))
+      					.flatMap(_.constructor)
+      					.flatMap(SomeFunctionTypeInfo.unapply(_))
+
+      		  val superArgs = baseConstructorInfoOpt collect {
+      				case baseConstructorInfo =>
+      					info
+      						.params
+      						.take(baseConstructorInfo.params.size)
+      						.map(_._1)
+      						.map(n => Ident(n: TermName))
+						} getOrElse(Nil)
+
+      			convertTypeRef(t, templateTypeNames).tpt -> superArgs
+    			}).getOrElse {
+      			val base =
+      				if (simpleClassName.matches("Object|Number|Boolean"))
+	              TypeTree(typeOf[AnyRef])
+	            else
+	              resolver("Object": TypeName)
+	          base -> Nil
           }
-        }
+
+        val interfaces =
+        	(doc.getExtendedInterfaces ++ doc.getImplementedInterfaces)
+      			.map(convertTypeRef(_, templateTypeNames).tpt)
+
+        // println(s"BASE = $base($baseArgs)")
+        // println(s"\tinterfaces = $interfaces")
 
         val cparams = getParams(info, rename = true)
         val classDef = q"""
-          @scalaxy.js.global
+          //@scalaxy.js.global
           class $className[..$tparamDefs](..$cparams)
-              extends ..$parents {
+              extends $base(..$baseArgs) with ..$interfaces {
             ..$protoMembers
           }
         """
         fixQuasiquotesInitSuperCall(classDef) :: companion
       // }
     }
-    result.map(fixQuasiquotesInitSuperCall)
+    val res = result.map(fixQuasiquotesInitSuperCall)
+
+    // if (simpleClassName == "Transferable")
+    // 	println("FOUND: " + res)
+  	res
   }
 
   val fixQuasiquotesInitSuperCall = {

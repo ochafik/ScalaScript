@@ -18,7 +18,7 @@ case class ClassVars(
   protoMembers: List[Scope.Var])
 
 case class GlobalVars(
-  classes: List[ClassVars],
+  classes: Map[String, ClassVars],
   globalVars: List[Scope.Var])
 
 object ExternsAnalysis {
@@ -74,19 +74,14 @@ object ExternsAnalysis {
     val classNames = constructors.keys ++ protoMembers.keys
 
     GlobalVars(
-      for (className <- classNames.toList.sorted) yield {
-    		// for (protoMember <- protoMembers; tt <- Option(protoMember.getThisType)) {
-    		// 	tt match {
-    		// 		case 
-    		// 	}
-    		// }
-        ClassVars(
+      (for (className <- classNames.toList.sorted) yield {
+        className -> ClassVars(
           className = className,
           templateTypeNames = Nil,
           constructor = constructors.get(className),
           staticMembers = if (staticMembers.contains(className)) staticMembers(className).toList else Nil,
           protoMembers = if (protoMembers.contains(className)) protoMembers(className).toList else Nil)
-      },
+      }).toMap,
       globalVars.values.toList)
   }
 }

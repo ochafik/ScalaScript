@@ -46,12 +46,12 @@ class ExternsTest {
 	          */
 	        MyClass.prototype.g = function(a, b, c, opt_d) {};
 
-	        /** @param {*} message */ 
+	        /** @param {*} message */
 	        var alertMe = function(message) {};
       """,
-  		""" object js {
-	  				@scalaxy.js.global
-		  			class MyClass extends js.Object {
+  		//@scalaxy.js.global
+			""" object js {
+	  				class MyClass extends js.Object() {
 		  				override def f(a: Double, b: String, c: java.lang.Double, opt_d: scala.Option[Double] = None): Double = ???
 		  				@scala.deprecated() def g(a: Double, b: String, c: java.lang.Double, opt_d: scala.Option[Double] = None): Double = ???
 		  			};
@@ -67,9 +67,9 @@ class ExternsTest {
             */
           var MyClass = function(a) {};
       """,
-  		""" object js {
-		  			@scalaxy.js.global
-		  			class MyClass(a$: js.Array[Double]) extends js.Object {
+  		//@scalaxy.js.global
+			""" object js {
+		  			class MyClass(a: js.Array[Double]) extends js.Object() {
 		  			}
 	  			}
   		""")
@@ -82,9 +82,9 @@ class ExternsTest {
             */
           var MyClass = function() {};
       """,
-  		""" object js {
-		  			@scalaxy.js.global
-		  			class MyClass[T] extends js.Object {
+  		//@scalaxy.js.global
+			""" object js {
+		  			class MyClass[T] extends js.Object() {
 		  			}
 	  			}
   		""")
@@ -102,9 +102,9 @@ class ExternsTest {
             */
           MyClass.prototype.f = function(u) {};
       """,
-  		""" object js {
-		  			@scalaxy.js.global
-		  			class MyClass extends js.Object {
+  		//@scalaxy.js.global
+			""" object js {
+		  			class MyClass extends js.Object() {
 	  					def f[U](u: U): Any = ???
 		  			}
 	  			}

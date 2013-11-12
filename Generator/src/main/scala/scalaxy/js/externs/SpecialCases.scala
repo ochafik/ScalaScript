@@ -47,5 +47,6 @@ object SpecialCases {
     /** @constructor */ // var WorkerGlobalScope = function() {};
     /** @constructor */ // var WorkerLocation = function() {};
     /** @constructor */ // var XMLHttpRequest = function() {};
+    /** @constructor */ // var NotificationPermissionCallback = function() {};
 	""")
 }

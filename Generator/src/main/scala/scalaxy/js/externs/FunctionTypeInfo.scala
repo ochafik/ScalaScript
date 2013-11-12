@@ -74,7 +74,10 @@ object ExtractorUtils {
 	  			}
 	  			alt(t.getAlternates.toList)
 	  		case t: ObjectType =>
-	  			Option(t.getTemplateTypes).map(_.toList)
+	  			// if (t.getDisplayName == "Array")
+	  			// 	Some(List("T"))
+	  	  //   else
+	  				Option(t.getTemplateTypes).map(_.toList)
 	  		case _ =>
 	  			// println(t.getClass.getName)
 	  			None
