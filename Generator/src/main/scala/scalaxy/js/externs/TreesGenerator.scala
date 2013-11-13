@@ -41,7 +41,7 @@ class TreesGenerator(val global: Universe) {
   		})
     	.sortBy(_.getName)
     	.flatMap(v =>
-    		try { Some(convertMember(v)._1) }
+    		try { Some(convertMember(v, Nil)._1) }
     		catch { case ex: Throwable => None })
     	.map(fixQuasiquotesInitSuperCall)
 
@@ -57,12 +57,17 @@ class TreesGenerator(val global: Universe) {
   	def apply(n: Name) = f(n)
   }
 
-  private def getMods(jsType: JSType): Modifiers = {
+  private def getMods(jsType: JSType, isOverride: Boolean): Modifiers = {
   	val optDocInfo = Option(jsType).flatMap(t => Option(t.getJSDocInfo))
   	val mutable = !optDocInfo.exists(_.isConstant)
 		val deprecated = optDocInfo.exists(_.isDeprecated)
 
-		var mods = if (mutable) Modifiers(Flag.MUTABLE) else NoMods
+		val flags = Seq(
+			if (mutable) Some(Flag.MUTABLE) else None,
+			if (isOverride) Some(Flag.OVERRIDE) else None
+		).flatten
+
+		var mods = if (flags.isEmpty) NoMods else Modifiers(flags.reduce(_ | _))
 		if (deprecated) {
 			mods = NoMods.mapAnnotations(list => q"new scala.deprecated" :: list)
 		}
@@ -110,12 +115,13 @@ class TreesGenerator(val global: Universe) {
 
   private def convertTypeRef(jsType: JSType,
 		  											 templateTypeNames: Set[String],
-		  											 nullable: Boolean = false)
+		  											 nullable: Boolean = false,
+		  											 isOverride: Boolean = false)
 						  							(implicit externs: ClosureCompiler, resolver: Resolver)
 						  						  : ConvertedType = {
   	import externs._
 
-  	val mods = getMods(jsType)
+  	val mods = getMods(jsType, isOverride)
   	def conv(tpe: Type, tpt: Tree = null, isOptional: Boolean = false): ConvertedType =
   		ConvertedType(mods, tpe = tpe, tpt = Option(tpt).getOrElse(TypeTree(tpe)), isOptional = isOptional)
 
@@ -319,12 +325,14 @@ class TreesGenerator(val global: Universe) {
   	}
   }
 
-  def convertMember(memberVar: Scope.Var)
+  def convertMember(memberVar: Scope.Var, parentTypes: List[JSType])
   								 (implicit compiler: ClosureCompiler, resolver: Resolver): (Tree, Option[FunctionTypeInfo]) = {
     val memberName: TermName = memberVar.getName.split("\\.").last
     val templateTypeNames = Option(memberVar.getJSDocInfo).map(_.getTemplateTypeNames().toSet).getOrElse(Set())
 
-    if (memberName.toString == "toString")
+    val isOverride = parentTypes.exists(_.hasProperty(memberName.toString))
+
+    if (memberName.toString == "toString" || isOverride)
       EmptyTree -> None
     else {
       assert(memberName.toString.trim != "")
@@ -332,7 +340,7 @@ class TreesGenerator(val global: Universe) {
       	case ft: FunctionType =>
         	val optInfo @ Some(info) = SomeFunctionTypeInfo.unapply(memberVar)
         	var mods =
-            if (info.isOverride && !invalidOverrideExceptions(memberVar.getName) ||
+            if ((info.isOverride || isOverride) && !invalidOverrideExceptions(memberVar.getName) ||
                 missingOverrideExceptions(memberVar.getName))
               Modifiers(Flag.OVERRIDE)
             else
@@ -358,7 +366,7 @@ class TreesGenerator(val global: Universe) {
       			convertTypeRef(memberVar.getJSDocInfo.getTypedefType, Set()).tpt) -> None
 
         case t =>
-          val conv = Option(t).map(convertTypeRef(_, templateTypeNames))
+          val conv = Option(t).map(convertTypeRef(_, templateTypeNames, isOverride = isOverride))
           	.getOrElse(ConvertedType(NoMods, typeOf[Any], TypeTree(typeOf[Any])))
           val vd = ValDef(conv.mods, memberName, conv.tpt,
         		if (conv.mods.hasFlag(Flag.MUTABLE)) EmptyTree
@@ -395,13 +403,46 @@ class TreesGenerator(val global: Universe) {
     val constructorInfo: Option[FunctionTypeInfo] =
     	classVars.constructor.flatMap(SomeFunctionTypeInfo.unapply(_))
 
+    val baseTypeOpt: Option[JSType] =
+    	for (c <- classVars.constructor;
+    			 doc <- Option(c.getJSDocInfo);
+    			 baseType <- Option(doc.getBaseType))
+    	yield baseType
+
+    val interfaceTypes: List[JSType] =
+    	classVars
+    		.constructor
+    		.flatMap(c => Option(c.getJSDocInfo))
+    		.toList
+    		.flatMap(doc => doc.getExtendedInterfaces.toList ++ doc.getImplementedInterfaces)
+    		.map(t => t: JSType)
+
+  	val parentTypes = baseTypeOpt.toList ++ interfaceTypes
+
+    val baseConstructorInfoOpt: Option[FunctionTypeInfo] =
+    	for (b <- baseTypeOpt;
+    			 n <- Option(b.getDisplayName);
+    			 cls <- globalVars.classes.get(n);
+    			 ctor <- cls.constructor;
+    			 info <- SomeFunctionTypeInfo.unapply(ctor))
+  		yield info
+
     val className: TypeName = simpleClassName
     val companionName: TermName = simpleClassName
 
     val (protoMembers, functionInfos: List[Option[FunctionTypeInfo]]) =
-    	classVars.protoMembers.sortBy(_.getName).map(convertMember(_)).unzip
+    	classVars
+    		.protoMembers
+    		.sortBy(_.getName)
+    		.map(convertMember(_, parentTypes))
+    		.unzip
+
     val staticMembers =
-    	classVars.staticMembers.sortBy(_.getName).filter(!_.getName.endsWith(".prototype")).map(convertMember(_)._1)
+    	classVars
+    		.staticMembers
+    		.sortBy(_.getName)
+    		.filter(!_.getName.endsWith(".prototype"))
+    		.map(convertMember(_, parentTypes)._1)
 
     // println("PROTO MEMBERS:\n\t" + protoMembers.mkString("\n\t"))
     // println("FUNCTION INFOS:\n\t" + functionInfos.mkString("\n\t"))
@@ -456,18 +497,12 @@ class TreesGenerator(val global: Universe) {
         val templateTypeNames = info.templateParamsSet
 
       	val (base: Tree, baseArgs: List[Tree]) =
-      		Option(doc.getBaseType).map(t => {
-      			val baseConstructorInfoOpt =
-      				Option(t.getDisplayName)
-      					.flatMap(globalVars.classes.get(_))
-      					.flatMap(_.constructor)
-      					.flatMap(SomeFunctionTypeInfo.unapply(_))
-
-      		  val superArgs = baseConstructorInfoOpt collect {
-      				case baseConstructorInfo =>
+      		baseTypeOpt.map(t => {
+      			val superArgs = baseConstructorInfoOpt collect {
+      				case baseInfo =>
       					info
       						.params
-      						.take(baseConstructorInfo.params.size)
+      						.take(baseInfo.params.size)
       						.map(_._1)
       						.map(n => Ident(n: TermName))
 						} getOrElse(Nil)
@@ -482,9 +517,7 @@ class TreesGenerator(val global: Universe) {
 	          base -> Nil
           }
 
-        val interfaces =
-        	(doc.getExtendedInterfaces ++ doc.getImplementedInterfaces)
-      			.map(convertTypeRef(_, templateTypeNames).tpt)
+        val interfaces = interfaceTypes.map(convertTypeRef(_, templateTypeNames).tpt)
 
         // println(s"BASE = $base($baseArgs)")
         // println(s"\tinterfaces = $interfaces")
